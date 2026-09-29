@@ -106,7 +106,7 @@ app.post('/api/generate', (request, response, next) => {
     }
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
     const preferredModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash'
-    const models = preferredModel === 'gemini-2.5-flash' ? [preferredModel] : [preferredModel, 'gemini-2.5-flash']
+    const models = [...new Set([preferredModel, 'gemini-3.5-flash-lite', 'gemini-2.5-flash'])]
     let result: Awaited<ReturnType<typeof ai.models.generateContent>> | undefined
     for (const model of models) {
       try {
