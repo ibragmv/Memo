@@ -35,7 +35,12 @@ export default function GenerateModal({ decks, initialDeckId, onClose, onSave }:
     setBusy(true); setError('')
     try {
       const response = await fetch('/api/generate', { method: 'POST', body })
-      const result: unknown = await response.json()
+      if (!response.headers.get('content-type')?.includes('application/json')) {
+        throw new Error('Сервер генерации недоступен. Перезапусти приложение командой npm run dev и попробуй снова.')
+      }
+      let result: unknown
+      try { result = await response.json() }
+      catch { throw new Error('Сервер вернул повреждённый ответ. Попробуй ещё раз.') }
       if (!result || typeof result !== 'object') throw new Error('Сервер вернул неверный ответ.')
       if (!response.ok) throw new Error('error' in result && typeof result.error === 'string' ? result.error : 'Не удалось создать карточки.')
       if (!('cards' in result) || !Array.isArray(result.cards)) throw new Error('Не удалось прочитать созданные карточки.')
@@ -43,7 +48,7 @@ export default function GenerateModal({ decks, initialDeckId, onClose, onSave }:
       if (!cards.length) throw new Error('Не получилось создать карточки. Попробуйте другой материал.')
       setDrafts(cards)
       if (!initialDeckId && !newTitle) setNewTitle(files[0].name.replace(/\.[^.]+$/, '').slice(0, 60))
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Не удалось обработать лекцию.') }
+    } catch (cause) { setError(cause instanceof TypeError ? 'Нет соединения с сервером генерации. Проверь, что приложение запущено.' : cause instanceof Error ? cause.message : 'Не удалось обработать лекцию.') }
     finally { setBusy(false) }
   }
 

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
+const host = process.env.HOST || '127.0.0.1'
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 5, fileSize: 12 * 1024 * 1024 } })
 const mimeByExtension: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -38,6 +39,18 @@ const schema = {
   required: ['cards'],
   additionalProperties: false,
 } as const
+
+function providerStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  if ('status' in error && Number.isInteger(Number(error.status))) return Number(error.status)
+  if (error instanceof Error) {
+    try {
+      const payload: unknown = JSON.parse(error.message)
+      if (payload && typeof payload === 'object' && 'error' in payload && payload.error && typeof payload.error === 'object' && 'code' in payload.error) return Number(payload.error.code)
+    } catch { /* Error message is not JSON. */ }
+  }
+  return undefined
+}
 
 async function extractText(file: Express.Multer.File, extension: string): Promise<string> {
   if (extension === '.txt' || extension === '.md') return file.buffer.toString('utf8')
@@ -95,11 +108,23 @@ app.post('/api/generate', (request, response, next) => {
       }
     }
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-    const result = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
-      contents: parts,
-      config: { responseMimeType: 'application/json', responseJsonSchema: schema, thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }, maxOutputTokens: 8192 },
-    })
+    const preferredModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash'
+    const models = preferredModel === 'gemini-2.5-flash' ? [preferredModel] : [preferredModel, 'gemini-2.5-flash']
+    let result: Awaited<ReturnType<typeof ai.models.generateContent>> | undefined
+    for (const model of models) {
+      try {
+        result = await ai.models.generateContent({
+          model,
+          contents: parts,
+          config: { responseMimeType: 'application/json', responseJsonSchema: schema, ...(model.startsWith('gemini-3') ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : {}), maxOutputTokens: 8192 },
+        })
+        break
+      } catch (error) {
+        if (providerStatus(error) === 503 && model !== models.at(-1)) continue
+        throw error
+      }
+    }
+    if (!result) throw new Error('No Gemini response')
     if (!result.text) { response.status(502).json({ error: 'Модель не смогла подготовить карточки. Попробуйте другой файл.' }); return }
     const parsed: unknown = JSON.parse(result.text)
     if (!parsed || typeof parsed !== 'object' || !('cards' in parsed) || !Array.isArray(parsed.cards)) throw new Error('Invalid model output')
@@ -107,10 +132,11 @@ app.post('/api/generate', (request, response, next) => {
     if (!cards.length) { response.status(422).json({ error: 'В файлах не нашлось достаточно материала для карточек. Попробуйте более чёткую лекцию.' }); return }
     response.json({ cards })
   } catch (error) {
-    const status = typeof error === 'object' && error && 'status' in error ? Number(error.status) : undefined
-    console.error('Gemini card generation failed:', error instanceof Error ? error.message : String(error))
+    const status = providerStatus(error)
+    console.error('Gemini card generation failed:', status ?? 'unknown provider error')
     if (status === 400 || status === 401 || status === 403) { response.status(503).json({ error: 'Не удалось обратиться к Gemini. Проверьте API-ключ и доступ к модели.' }); return }
     if (status === 429) { response.status(429).json({ error: 'Лимит Gemini API исчерпан. Попробуйте позже.' }); return }
+    if (status === 503) { response.status(503).json({ error: 'Gemini сейчас перегружен. Попробуйте создать карточки чуть позже.' }); return }
     response.status(502).json({ error: 'Не удалось обработать лекцию. Попробуйте другой файл или повторите позже.' })
   }
 })
@@ -130,4 +156,4 @@ app.use((request, response) => {
   if (request.path.startsWith('/api/')) { response.status(404).json({ error: 'Маршрут API не найден.' }); return }
   response.sendFile(path.join(staticDirectory, 'index.html'))
 })
-app.listen(port, () => console.log(`Memo server listening on http://localhost:${port}`))
+app.listen(port, host, () => console.log(`Memo server listening on http://${host}:${port}`))
