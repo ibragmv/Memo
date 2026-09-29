@@ -4,8 +4,8 @@ import type { Deck } from './data'
 
 export type GeneratedCard = { question: string; answer: string; selected: boolean }
 const extensions = ['pdf', 'docx', 'pptx', 'txt', 'md', 'png', 'jpg', 'jpeg', 'webp']
-const maxFileSize = 12 * 1024 * 1024
-const maxTotalSize = 20 * 1024 * 1024
+const maxFileSize = 4 * 1024 * 1024
+const maxTotalSize = 4 * 1024 * 1024
 
 export default function GenerateModal({ decks, initialDeckId, onClose, onSave }: { decks: Deck[]; initialDeckId?: string; onClose: () => void; onSave: (cards: GeneratedCard[], deckId: string | null, newTitle: string) => void }) {
   const [files, setFiles] = useState<File[]>([])
@@ -23,7 +23,7 @@ export default function GenerateModal({ decks, initialDeckId, onClose, onSave }:
     const merged = [...files, ...Array.from(incoming)]
     if (merged.length > 5) { setError('Можно загрузить не больше 5 файлов.'); return }
     if (merged.some(file => !extensions.includes(file.name.split('.').pop()?.toLowerCase() || ''))) { setError('Поддерживаются PDF, DOCX, PPTX, TXT, MD, PNG, JPG и WEBP.'); return }
-    if (merged.some(file => file.size > maxFileSize) || merged.reduce((sum, file) => sum + file.size, 0) > maxTotalSize) { setError('Размер одного файла — до 12 МБ, всех вместе — до 20 МБ.'); return }
+    if (merged.some(file => file.size > maxFileSize) || merged.reduce((sum, file) => sum + file.size, 0) > maxTotalSize) { setError('Общий размер файлов — до 4 МБ.'); return }
     setFiles(merged); setError('')
   }
 
@@ -36,7 +36,7 @@ export default function GenerateModal({ decks, initialDeckId, onClose, onSave }:
     try {
       const response = await fetch('/api/generate', { method: 'POST', body })
       if (!response.headers.get('content-type')?.includes('application/json')) {
-        throw new Error('Сервер генерации недоступен. Перезапусти приложение командой npm run dev и попробуй снова.')
+        throw new Error(response.status === 413 ? 'Файлы слишком большие для загрузки. Уменьши их общий размер до 4 МБ.' : 'Генерация сейчас недоступна. Попробуй позже.')
       }
       let result: unknown
       try { result = await response.json() }
@@ -48,7 +48,7 @@ export default function GenerateModal({ decks, initialDeckId, onClose, onSave }:
       if (!cards.length) throw new Error('Не получилось создать карточки. Попробуйте другой материал.')
       setDrafts(cards)
       if (!initialDeckId && !newTitle) setNewTitle(files[0].name.replace(/\.[^.]+$/, '').slice(0, 60))
-    } catch (cause) { setError(cause instanceof TypeError ? 'Нет соединения с сервером генерации. Проверь, что приложение запущено.' : cause instanceof Error ? cause.message : 'Не удалось обработать лекцию.') }
+    } catch (cause) { setError(cause instanceof TypeError ? 'Нет соединения с сервером генерации. Попробуй позже.' : cause instanceof Error ? cause.message : 'Не удалось обработать лекцию.') }
     finally { setBusy(false) }
   }
 
